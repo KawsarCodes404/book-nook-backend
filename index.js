@@ -46,7 +46,8 @@ const verifyToken = async (req, res, next) => {
     try {
         const { payload } = await jwtVerify(token, JWKS);
         next();
-    } catch (error) {
+    } 
+    catch (error) {
         return res.status(500).send({ msg: 'Token isnt verified' });
     }
 };

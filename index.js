@@ -149,6 +149,54 @@ app.delete('/books/:id', verifyToken, async (req, res) => {
     res.json({ message: "Book removed from your shelf." });
 });
 
+app.post('/borrows', verifyToken, async (req, res) => {
+    const { bookId } = req.body;
+    if (!ObjectId.isValid(bookId)) return res.status(400).json({ message: "Invalid book id." });
+    const book = await bookCollection.findOne({ _id: new ObjectId(bookId) });
+    if (!book) return res.status(404).json({ message: "Book not found." });
+    const existingBorrow = await borrowsCollection.findOne({ bookId, userEmail: req.user.email, status: "borrowed" });
+    if (existingBorrow) return res.status(409).json({ message: "You already borrowed this book." });
+    const copyResult = await bookCollection.updateOne(
+        { _id: new ObjectId(bookId), availableCopies: { $gt: 0 } },
+        { $inc: { availableCopies: -1 } }
+    );
+    if (!copyResult.modifiedCount) return res.status(409).json({ message: "This book is not available right now." });
+    const borrowedAt = new Date();
+    const returnAt = new Date(borrowedAt);
+    returnAt.setDate(returnAt.getDate() + 7);
+    try {
+        const result = await borrowsCollection.insertOne({
+            bookId, bookTitle: book.title, bookImage: book.image,
+            userEmail: req.user.email, userName: req.user.name,
+            borrowDate: borrowedAt, returnDate: returnAt, status: "borrowed",
+        });
+        res.status(201).json({ message: "Book borrowed! Return it within 7 days.", borrowId: result.insertedId });
+    } catch (error) {
+        await bookCollection.updateOne({ _id: new ObjectId(bookId) }, { $inc: { availableCopies: 1 } });
+        if (error?.code === 11000) return res.status(409).json({ message: "You already borrowed this book." });
+        throw error;
+    }
+});
+
+app.get('/borrows', verifyToken, async (req, res) => {
+    const borrows = await borrowsCollection.find({ userEmail: req.user.email, status: "borrowed" }).sort({ borrowDate: -1 }).toArray();
+    res.json(borrows);
+});
+
+app.delete('/borrows/:id', verifyToken, async (req, res) => {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: "Invalid borrow id." });
+    const borrow = await borrowsCollection.findOneAndUpdate(
+        { _id: new ObjectId(req.params.id), userEmail: req.user.email, status: "borrowed" },
+        { $set: { status: "returned", returnedAt: new Date() } },
+        { returnDocument: "before" }
+    );
+    if (!borrow) return res.status(404).json({ message: "Active borrow not found." });
+    await bookCollection.updateOne({ _id: new ObjectId(borrow.bookId) }, { $inc: { availableCopies: 1 } });
+    res.json({ message: "Book returned. Thank you!" });
+});
+
+
+
 app.get('/', (req, res) => {
     res.send({ message: `Server is running fine!` });
 });

@@ -68,6 +68,87 @@ const verifyToken = async (req, res, next) => {
     }
 };
 
+app.get('/books', async (req, res) => {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 0, 0), 100);
+    let cursor = bookCollection.find().sort({ addedAt: -1 });
+    if (limit) cursor = cursor.limit(limit);
+    const books = await cursor.toArray();
+    res.json(books);
+});
+
+app.get('/books/:id', async (req, res) => {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: "Invalid book id." });
+    const book = await bookCollection.findOne({ _id: new ObjectId(req.params.id) });
+    if (!book) return res.status(404).json({ message: "Book not found." });
+    res.json(book);
+});
+
+app.post('/books', verifyToken, async (req, res) => {
+    const { title, author, category, image, description, totalCopies } = req.body;
+    if (typeof title !== "string" || !title.trim() || typeof author !== "string" || !author.trim() || typeof image !== "string" || !image.trim() || typeof description !== "string" || !description.trim()) {
+        return res.status(400).json({ message: "Title, author, image, and description are required." });
+    }
+    if (!["Fiction", "Science", "History", "Kids", "Others"].includes(category)) {
+        return res.status(400).json({ message: "Choose a valid book category." });
+    }
+    const copies = Number(totalCopies);
+    if (!Number.isInteger(copies) || copies < 1) {
+        return res.status(400).json({ message: "Total copies must be at least one." });
+    }
+    const book = {
+        title: title.trim(), author: author.trim(), category,
+        image: image.trim(), description: description.trim(),
+        totalCopies: copies, availableCopies: copies,
+        ownerName: req.user.name, ownerEmail: req.user.email,
+        addedAt: new Date(),
+    };
+    const result = await bookCollection.insertOne(book);
+    res.status(201).json({ message: "Book added to the library.", bookId: result.insertedId });
+});
+
+app.patch('/books/:id', verifyToken, async (req, res) => {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: "Invalid book id." });
+    const allowedFields = ["title", "author", "category", "image", "description", "totalCopies"];
+    const update = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowedFields.includes(key)));
+    for (const field of ["title", "author", "image", "description"]) {
+        if (update[field] !== undefined) {
+            if (typeof update[field] !== "string" || !update[field].trim()) return res.status(400).json({ message: `${field} is required.` });
+            update[field] = update[field].trim();
+        }
+    }
+    if (update.totalCopies !== undefined) {
+        update.totalCopies = Number(update.totalCopies);
+        if (!Number.isInteger(update.totalCopies) || update.totalCopies < 1) return res.status(400).json({ message: "Total copies must be at least one." });
+    }
+    if (update.category !== undefined && !["Fiction", "Science", "History", "Kids", "Others"].includes(update.category)) {
+        return res.status(400).json({ message: "Choose a valid book category." });
+    }
+    const book = await bookCollection.findOne({ _id: new ObjectId(req.params.id), ownerEmail: req.user.email });
+    if (!book) return res.status(404).json({ message: "Book not found in your shelf." });
+    if (update.totalCopies !== undefined) {
+        const alreadyBorrowed = book.totalCopies - book.availableCopies;
+        if (update.totalCopies < alreadyBorrowed) return res.status(400).json({ message: "Total copies cannot be less than copies currently borrowed." });
+        update.availableCopies = update.totalCopies - alreadyBorrowed;
+    }
+    const result = await bookCollection.updateOne(
+        { _id: new ObjectId(req.params.id), ownerEmail: req.user.email },
+        { $set: update }
+    );
+    if (!result.matchedCount) return res.status(404).json({ message: "Book not found in your shelf." });
+    res.json({ message: "Book details updated." });
+});
+
+app.delete('/books/:id', verifyToken, async (req, res) => {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: "Invalid book id." });
+    const book = await bookCollection.findOne({ _id: new ObjectId(req.params.id), ownerEmail: req.user.email });
+    if (!book) return res.status(404).json({ message: "Book not found in your shelf." });
+    const activeBorrow = await borrowsCollection.findOne({ bookId: req.params.id, status: "borrowed" });
+    if (activeBorrow) return res.status(409).json({ message: "This book cannot be removed while someone has borrowed it." });
+    const result = await bookCollection.deleteOne({ _id: new ObjectId(req.params.id), ownerEmail: req.user.email });
+    if (!result.deletedCount) return res.status(404).json({ message: "Book not found in your shelf." });
+    res.json({ message: "Book removed from your shelf." });
+});
+
 app.get('/', (req, res) => {
     res.send({ message: `Server is running fine!` });
 });

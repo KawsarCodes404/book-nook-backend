@@ -46,17 +46,27 @@ const verifyToken = async (req, res, next) => {
         return res.status(401).send({ msg: 'Unauthorized' });
     }
 
-    const JWKS = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL}/api/auth/jwks`));
+    const clientUrl = process.env.CLIENT_URL || process.env.BETTER_AUTH_URL;
+    if (!clientUrl) {
+        return res.status(500).json({ message: "CLIENT_URL must point to the BookNook frontend." });
+    }
+
+    const JWKS = createRemoteJWKSet(new URL(`${clientUrl}/api/auth/jwks`));
 
     try {
-        const { payload } = await jwtVerify(token, JWKS);
+        const { payload } = await jwtVerify(token, JWKS, {
+            issuer: clientUrl,
+            audience: clientUrl,
+        });
+        if (typeof payload.email !== "string" || !payload.email) {
+            return res.status(401).json({ message: "The token does not contain a user email." });
+        }
+        req.user = { email: payload.email, name: typeof payload.name === "string" ? payload.name : "Reader" };
         next();
-    } catch (error) {
-        return res.status(500).send({ msg: 'Token isnt verified' });
+    } catch {
+        return res.status(401).json({ message: "Your session expired. Please log in again." });
     }
 };
-
-
 
 app.get('/', (req, res) => {
     res.send({ message: `Server is running fine!` });

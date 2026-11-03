@@ -25,8 +25,13 @@ export async function connectToMongoDB() {
 const mongoClient = await connectToMongoDB();
 
 const db = mongoClient.db("book-nook");
-// const destinationCollection = db.collection("destination");
-// const bookingCollection = db.collection("bookings");
+const bookCollection = db.collection("books");
+const borrowsCollection = db.collection("borrows");
+
+await borrowsCollection.createIndex(
+    { userEmail: 1, bookId: 1 },
+    { unique: true, partialFilterExpression: { status: "borrowed" } }
+);
 
 const verifyToken = async (req, res, next) => {
     const authHeader = req.headers.authorization;

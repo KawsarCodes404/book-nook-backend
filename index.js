@@ -202,7 +202,7 @@ app.get('/', (req, res) => {
 });
 
 // http://localhost:8000
-app.listen(PORT, () => {
+app.listen(Number(process.env.PORT) || PORT, () => {
     console.log(`Server is running at ${PORT}`);
 });
 
